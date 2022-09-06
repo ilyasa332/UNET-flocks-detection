@@ -5,7 +5,7 @@ from create_previous_images import create_early_image_2
 
 
 
-def image_generator(files,box,num_past, minuts batch_size=32, sz=(256, 256)):
+def image_generator(files,box,num_past, minuts, batch_size=32, sz=(256, 256)):
     while True:
 
         # extract a random batch
