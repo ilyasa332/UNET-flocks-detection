@@ -2,6 +2,7 @@ import keras
 from keras.models import Model
 from keras.layers import Conv2D, MaxPooling2D, Input, Conv2DTranspose, Concatenate, BatchNormalization, UpSampling2D
 import tensorflow as tf
+from keras import backend as K
 
 def mean_iou(y_true, y_pred):
     yt0 = y_true[:,:,:,0]
