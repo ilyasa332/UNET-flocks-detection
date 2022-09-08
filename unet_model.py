@@ -49,6 +49,6 @@ def unet(sz=(256, 256, 9)):
     ##changed the metrics in the compile to accuracy
     # model creation
     model = Model(inputs=[inputs], outputs=[outputs])
-    model.compile(optimizer='rmsprop', loss='binary_crossentropy', metrics=[mean_iou, 'accuracy'])
+    model.compile(optimizer='rmsprop', loss='binary_crossentropy', metrics=['accuracy'])
 
     return model
