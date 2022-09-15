@@ -25,7 +25,7 @@ For running a demo with our data (radial velocity images) follow the bellow step
 
 For prediciting your data with our trainned model,follow the bellow steps:
 
-1- Create from your h5 radar files PPI images with 'creating_ppi.R' (in the 'prepare_data' folder)
+1- Create from your h5 radar files PPI images with 'creating_ppi.R' (in the 'prepare_data' folder). The model uses 2 previous images of each image we want to predict so you have to have consecutive images.
 2- Download our best epoch from [this link](https://drive.google.com/file/d/1hnWelWk0rSyUfAXgGJMQa_PCyip97_sc/view?usp=sharing)
 3- Run 'evaluate_performance_f.ipynb'
 
