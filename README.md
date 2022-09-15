@@ -13,7 +13,7 @@ This code has been implemented in python language using Keras libarary with tens
 - Keras - tensorflow backend version 1.x
 
 ## Data 
-We could only share the images created from the original h5 radar files.
+We could only share the PPI images created from the original h5 radar files (and not the h5 files).
 For running a demo with our data (radial velocity images) follow the bellow steps:
 
 ### Run Demo
