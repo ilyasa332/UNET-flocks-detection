@@ -1,14 +1,64 @@
-from datetime import datetime
 import glob
 import os
 import re
+from datetime import datetime
 
+import lightning.pytorch as pl
 import torch
+from lightning.pytorch.loggers import TensorBoardLogger
+from lightning.pytorch.utilities.types import STEP_OUTPUT, OptimizerLRScheduler
+from pytorch.birds_dataset import BirdsDataset
 from torch import nn
-from torch.utils.data import DataLoader, IterableDataset
+from torch.utils.data import DataLoader
+from torchmetrics.classification import BinaryAUROC
 
-from experiments.birds.dataset import image_generator
-from experiments.birds.model import UNet
+from pytorch.birds_utils import fix_random_seed
+from pytorch.model import UNet
+
+fix_random_seed(123)
+
+
+class AutoEncoderModule(pl.LightningModule):
+    def __init__(self, model: nn.Module, loss_fn):
+        super().__init__()
+        self.model = model
+        self.loss_fn = loss_fn
+        self.train_auc = BinaryAUROC()
+        self.valid_auc = BinaryAUROC()
+
+    def training_step(self, batch, batch_index) -> STEP_OUTPUT:
+        x, y = batch
+        output = self.model(x.to(torch.float32))
+        loss = self.loss_fn(output, y.to(torch.float32))
+        self.train_auc.update(output.detach().cpu(), y.cpu())
+        self.log("loss_train", loss.item(), on_step=True)
+        return loss
+
+    def on_train_epoch_end(self):
+        # pass
+        self.log('auc_train', self.train_auc.compute())
+
+    def on_train_epoch_start(self) -> None:
+        del self.train_auc
+        del self.valid_auc
+        self.train_auc = BinaryAUROC()
+        self.valid_auc = BinaryAUROC()
+        # pass
+
+    def configure_optimizers(self) -> OptimizerLRScheduler:
+        return torch.optim.AdamW(self.model.parameters(), lr=0.01)
+
+    def validation_step(self, batch, batch_index) -> STEP_OUTPUT:
+        x, y = batch
+        output = self.model(x.to(torch.float32))
+        loss = self.loss_fn(output, y.to(torch.float32))
+        self.valid_auc.update(output.detach().cpu(), y.cpu())
+        self.log("loss_valid", loss.item(), on_epoch=True)
+        return loss
+
+    def on_validation_epoch_end(self) -> None:
+        self.log('auc_valid', self.valid_auc.compute())
+        pass
 
 
 def get_data(src_dir: str, phase: str):
@@ -27,42 +77,29 @@ data_github_path = '/mnt/storage/bird_data/image_data_and_labels/Data_github'
 train_files = get_data(data_github_path, "train")
 test_files = get_data(data_github_path, "test")
 
+debug = False
+debug_size = 500
 box = (29, 29, 450, 450)
 num_past = 2
 minutes = 7
-batch_size = 128
 sz = (256, 256)
 
+if debug:
+    print(f"DEBUG MODE")
+    train_files = train_files[:debug_size]
+    test_files = test_files[:debug_size]
 
-class IterDataset(IterableDataset):
-    def __init__(self, generator):
-        self.generator = generator
+train_ds = BirdsDataset(train_files, num_past=num_past, diff_minutes=minutes, box=box, size=sz)
+train_dl = DataLoader(train_ds, batch_size=32, num_workers=12, shuffle=True)
 
-    def __iter__(self):
-        return self.generator
-
-
-train_generator = image_generator(train_files, num_past=num_past, minutes=minutes, box=box, batch_size=4)
-train_dl = DataLoader(IterDataset(train_generator), batch_size=1)
-
-# valid_generator = image_generator(test_files, num_past=num_past, minutes=minutes, box=box, batch_size=1)
-# valid_dl = DataLoader(valid_generator, batch_size=1)
+test_ds = BirdsDataset(test_files, num_past=num_past, diff_minutes=minutes, box=box, size=sz)
+test_dl = DataLoader(test_ds, batch_size=32, num_workers=12, shuffle=False)
 
 device = "cuda"
 
-model = UNet()
-model.to(device)
-loss_fn = nn.BCELoss()
+lightning_model = AutoEncoderModule(model=UNet(), loss_fn=nn.BCELoss())
+logger = TensorBoardLogger(save_dir='logs')
 
-optimizer = torch.optim.RMSprop(model.parameters())
-
-
-for x, y in train_dl:
-    x = x.to(device)
-    y = y.to(device)
-    output = model(x.permute((0, 1, 4, 2, 3)).squeeze(0))
-    loss = loss_fn(output.squeeze(), y.squeeze(0, -1).to(torch.float32))
-    loss.backward()
-    optimizer.step()
-    optimizer.zero_grad()
-    print(loss)
+trainer = pl.Trainer(max_epochs=30, devices='auto', accelerator='gpu', logger=logger,
+                     log_every_n_steps=1)
+trainer.fit(model=lightning_model, train_dataloaders=train_dl, val_dataloaders=test_dl)
