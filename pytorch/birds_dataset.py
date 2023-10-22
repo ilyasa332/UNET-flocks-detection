@@ -1,22 +1,22 @@
 import os
 import pickle
 import re
-import time
-from collections import defaultdict
 from datetime import datetime
+from typing import Tuple, List
 
 import numpy as np
 import torch
 from PIL import Image
 from torch.utils.data import Dataset
-from typing import Tuple, List
-
 from tqdm import tqdm
 
 
 class BirdsDataset(Dataset):
     def __init__(self, files: List[str], box: Tuple, num_past: int, diff_minutes: int, size: Tuple[int, int]):
-        self.files = files
+        self.files_full_path = files
+        self.file_names = [os.path.basename(f) for f in files]
+        self.file_names_no_ext = [os.path.splitext(f)[0] for f in self.file_names]
+
         self.box = box
         self.num_past = num_past
         self.diff_minutes = diff_minutes
@@ -29,20 +29,31 @@ class BirdsDataset(Dataset):
         self.times = torch.tensor(self.times).long()
         time_mask = self.times[:, None] - self.times[None, :] > diff_minutes * 60
         self.relevant_indices = (time_mask.sum(dim=1) >= self.num_past).nonzero().flatten()
-        self.mask_files = {file: self._get_mask_file_path(file) for file in tqdm(files)}
-        for idx, rel_idx in enumerate(tqdm(self.relevant_indices.tolist())):
-            item = self.get_item_old(rel_idx)
-            with open(os.path.join(self.cache_dir, f"{idx}.pkl"), "wb") as f:
+        self.mask_files = {file: self._get_mask_file_path(file) for file in tqdm(files, desc="getting mask paths")}
+
+        names = [os.path.splitext(os.path.basename(self.files_full_path[rel_idx]))[0] + ".pkl" for rel_idx in
+                 self.relevant_indices.tolist()]
+        missing_files = set(names).difference(os.listdir(self.cache_dir))
+        for file in tqdm(missing_files, desc="generating samples for cache"):
+            name = os.path.splitext(file)[0]
+            index = self.file_names_no_ext.index(name)
+            item = self.get_item_old(index)
+            with open(os.path.join(self.cache_dir, f"{name}.pkl"), "wb") as f:
                 pickle.dump(item, f)
 
     def get_item_old(self, index):
-        imgs = [self._load_img(self.files[index - i]) for i in range(self.num_past + 1)]
-        label = self._load_annotation(self.files[index])
+        imgs = [self._load_img(self.files_full_path[index - i]) for i in range(self.num_past + 1)]
+        label = self._load_annotation(self.files_full_path[index])
         return torch.concatenate(imgs, dim=2).permute(2, 0, 1), label
 
     def __getitem__(self, index):
-        with open(os.path.join(self.cache_dir, f"{index}.pkl"), "rb") as f:
-            return pickle.load(f)
+        rel_idx = self.relevant_indices[index].item()
+        filename = os.path.splitext(os.path.basename(self.files_full_path[rel_idx]))[0]
+        with open(os.path.join(self.cache_dir, f"{filename}.pkl"), "rb") as f:
+            try:
+                return pickle.load(f)
+            except:
+                print(":(")
 
     def _load_img(self, file):
         image_prev = Image.open(file)
