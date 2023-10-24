@@ -23,13 +23,13 @@ class BirdsDataset(Dataset):
         self.size = size
         self.cache_dir = "cache"
         os.makedirs(self.cache_dir, exist_ok=True)
+
         self._listdirs = {}
         self.times = [datetime.strptime(re.search('--(.*)_VRADH', os.path.basename(file)).group(1).replace('-', ' '),
                                         '%Y%m%d %H%M%S').timestamp() for file in files]
         self.times = torch.tensor(self.times).long()
         time_mask = self.times[:, None] - self.times[None, :] > diff_minutes * 60
         self.relevant_indices = (time_mask.sum(dim=1) >= self.num_past).nonzero().flatten()
-        self.mask_files = {file: self._get_mask_file_path(file) for file in tqdm(files, desc="getting mask paths")}
 
         names = [os.path.splitext(os.path.basename(self.files_full_path[rel_idx]))[0] + ".pkl" for rel_idx in
                  self.relevant_indices.tolist()]
@@ -50,10 +50,7 @@ class BirdsDataset(Dataset):
         rel_idx = self.relevant_indices[index].item()
         filename = os.path.splitext(os.path.basename(self.files_full_path[rel_idx]))[0]
         with open(os.path.join(self.cache_dir, f"{filename}.pkl"), "rb") as f:
-            try:
-                return pickle.load(f)
-            except:
-                print(":(")
+            return pickle.load(f)
 
     def _load_img(self, file):
         image_prev = Image.open(file)
@@ -63,7 +60,7 @@ class BirdsDataset(Dataset):
         return torch.from_numpy(img_numpy)
 
     def _load_annotation(self, file):
-        mask_file = self.mask_files[file]
+        mask_file = self._get_mask_file_path(file)
         if mask_file is None:
             mask = np.zeros((256, 256), dtype=np.uint8)
         else:
@@ -87,3 +84,18 @@ class BirdsDataset(Dataset):
 
     def __len__(self):
         return len(self.relevant_indices)
+
+
+class DummyDataset(Dataset):
+    def __init__(self, dataset: Dataset, indices: Tuple[int] = (0,), trim_len: bool = False):
+        self.dataset = dataset
+        self.indices = indices
+        self.trim_len = trim_len
+
+    def __getitem__(self, item):
+        return self.dataset[self.indices[item % len(self.indices)]]
+
+    def __len__(self):
+        if self.trim_len:
+            return len(self.indices)
+        return len(self.dataset)

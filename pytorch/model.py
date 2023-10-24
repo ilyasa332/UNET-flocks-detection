@@ -1,6 +1,7 @@
 import torch
 from torch import nn
 from torch.nn import functional as F
+from torch.nn.init import trunc_normal_
 
 
 class UNet(nn.Module):
@@ -49,6 +50,12 @@ class UNet(nn.Module):
             nn.Conv2d(num_filters, 1, kernel_size=1, padding="same"),
             nn.Sigmoid(),
         )
+
+        def _init_weights(m):
+            if isinstance(m, (nn.Conv2d, nn.ConvTranspose2d)):
+                trunc_normal_(m.weight, std=.02)
+
+        self.apply(_init_weights)
 
     def forward(self, x: torch.Tensor):
         results = []
