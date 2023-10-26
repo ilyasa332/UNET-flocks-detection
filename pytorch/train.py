@@ -107,17 +107,17 @@ if __name__ == "__main__":
         train_files = train_files[:debug_size]
         test_files = test_files[:debug_size]
 
-    train_ds = BirdsDataset(train_files, num_past=num_past, diff_minutes=minutes, box=box, size=sz)
+    train_ds = BirdsDataset(train_files, num_past=num_past, diff_minutes=minutes, box=box, size=sz, should_augment=True)
     # train_ds = DummyDataset(train_ds, indices=(352, 353))
-    train_dl = DataLoader(train_ds, batch_size=32, num_workers=12, shuffle=True)
+    train_dl = DataLoader(train_ds, batch_size=32, num_workers=0, shuffle=True)
 
-    test_ds = BirdsDataset(test_files, num_past=num_past, diff_minutes=minutes, box=box, size=sz)
+    test_ds = BirdsDataset(test_files, num_past=num_past, diff_minutes=minutes, box=box, size=sz, should_augment=False)
     # test_ds = DummyDataset(train_ds, indices=(352, 353), trim_len=True)
     test_dl = DataLoader(test_ds, batch_size=32, num_workers=12, shuffle=False)
 
     device = "cuda"
     lightning_model = AutoEncoderModule(model=UNet(n_channels=9, n_classes=1), loss_fn=nn.BCEWithLogitsLoss())
-    logger = TensorBoardLogger(save_dir='logs', name=f"lr={lr};threshold={threshold};sep_sites")
+    logger = TensorBoardLogger(save_dir='logs', name=f"lr={lr};threshold={threshold};augmentations")
 
     lr_monitor = LearningRateMonitor(logging_interval='step')
 
