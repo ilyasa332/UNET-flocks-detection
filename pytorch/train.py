@@ -5,7 +5,7 @@ from datetime import datetime
 
 import lightning.pytorch as pl
 import torch
-from lightning.pytorch.callbacks import LearningRateMonitor
+from lightning.pytorch.callbacks import LearningRateMonitor, ModelCheckpoint
 from lightning.pytorch.loggers import TensorBoardLogger
 from lightning.pytorch.utilities.types import STEP_OUTPUT, OptimizerLRScheduler
 
@@ -64,7 +64,8 @@ class AutoEncoderModule(pl.LightningModule):
         # loss = ((loss * y) / self.tr + (loss * (1 - y)) / (1 - self.tr)).mean()
         self.valid_auc.update(F.sigmoid(output).detach().cpu(), y.cpu())
         self.log("loss_valid", loss.item(), on_epoch=True)
-        visualize_predictions(x, F.sigmoid(output), y, self.logger, step=self.trainer.current_epoch, batch_index=batch_index,
+        visualize_predictions(x, F.sigmoid(output), y, self.logger, step=self.trainer.current_epoch,
+                              batch_index=batch_index,
                               threshold=threshold)
         return loss
 
@@ -85,12 +86,8 @@ def get_data(src_dir: str, phase: str):
     return files
 
 
-data_github_path = '/mnt/storage/bird_data/image_data_and_labels/Data_github'
-train_files = get_data(data_github_path, "train")
-test_files = get_data(data_github_path, "test")
-
 debug = False
-debug_size = 500
+debug_size = 100
 box = (29, 29, 450, 450)
 num_past = 2
 minutes = 7
@@ -100,25 +97,32 @@ lr = 0.001
 threshold = 0.5
 num_epochs = 20
 
-if debug:
-    print(f"DEBUG MODE")
-    train_files = train_files[:debug_size]
-    test_files = test_files[:debug_size]
+if __name__ == "__main__":
+    data_github_path = '/mnt/storage/bird_data/image_data_and_labels/Data_github'
+    train_files = get_data(data_github_path, "train")
+    test_files = get_data(data_github_path, "test")
 
-train_ds = BirdsDataset(train_files, num_past=num_past, diff_minutes=minutes, box=box, size=sz)
-# train_ds = DummyDataset(train_ds, indices=(352, 353))
-train_dl = DataLoader(train_ds, batch_size=32, num_workers=12, shuffle=True)
+    if debug:
+        print(f"DEBUG MODE")
+        train_files = train_files[:debug_size]
+        test_files = test_files[:debug_size]
 
-test_ds = BirdsDataset(test_files, num_past=num_past, diff_minutes=minutes, box=box, size=sz)
-# test_ds = DummyDataset(train_ds, indices=(352, 353), trim_len=True)
-test_dl = DataLoader(test_ds, batch_size=32, num_workers=12, shuffle=False)
+    train_ds = BirdsDataset(train_files, num_past=num_past, diff_minutes=minutes, box=box, size=sz)
+    # train_ds = DummyDataset(train_ds, indices=(352, 353))
+    train_dl = DataLoader(train_ds, batch_size=32, num_workers=12, shuffle=True)
 
-device = "cuda"
-lightning_model = AutoEncoderModule(model=UNet(n_channels=9, n_classes=1), loss_fn=nn.BCEWithLogitsLoss())
-logger = TensorBoardLogger(save_dir='logs', name=f"lr={lr};threshold={threshold};unet_github")
+    test_ds = BirdsDataset(test_files, num_past=num_past, diff_minutes=minutes, box=box, size=sz)
+    # test_ds = DummyDataset(train_ds, indices=(352, 353), trim_len=True)
+    test_dl = DataLoader(test_ds, batch_size=32, num_workers=12, shuffle=False)
 
-lr_monitor = LearningRateMonitor(logging_interval='step')
+    device = "cuda"
+    lightning_model = AutoEncoderModule(model=UNet(n_channels=9, n_classes=1), loss_fn=nn.BCEWithLogitsLoss())
+    logger = TensorBoardLogger(save_dir='logs', name=f"lr={lr};threshold={threshold};sep_sites")
 
-trainer = pl.Trainer(max_epochs=num_epochs, devices=[0], accelerator='gpu', logger=logger,
-                     log_every_n_steps=1, callbacks=[lr_monitor], max_steps=num_epochs * len(train_dl))
-trainer.fit(model=lightning_model, train_dataloaders=train_dl, val_dataloaders=test_dl)
+    lr_monitor = LearningRateMonitor(logging_interval='step')
+
+    checkpoint_callback = ModelCheckpoint(save_top_k=3, monitor="auc_valid", mode="max")
+    trainer = pl.Trainer(max_epochs=num_epochs, devices=[0], accelerator='gpu', logger=logger,
+                         log_every_n_steps=1, callbacks=[lr_monitor, checkpoint_callback],
+                         max_steps=num_epochs * len(train_dl))
+    trainer.fit(model=lightning_model, train_dataloaders=train_dl, val_dataloaders=test_dl)

@@ -4,6 +4,7 @@ import re
 from datetime import datetime
 from typing import Tuple, List
 
+import cv2
 import numpy as np
 import torch
 from PIL import Image
@@ -25,15 +26,22 @@ class BirdsDataset(Dataset):
         os.makedirs(self.cache_dir, exist_ok=True)
 
         self._listdirs = {}
+        ramon_mask = torch.tensor(['Ramon' in f for f in self.files_full_path])
+
         self.times = [datetime.strptime(re.search('--(.*)_VRADH', os.path.basename(file)).group(1).replace('-', ' '),
                                         '%Y%m%d %H%M%S').timestamp() for file in files]
         self.times = torch.tensor(self.times).long()
         time_mask = self.times[:, None] - self.times[None, :] > diff_minutes * 60
-        self.relevant_indices = (time_mask.sum(dim=1) >= self.num_past).nonzero().flatten()
+        relevant_indices = []
+
+        for location_mask in (ramon_mask, ~ramon_mask):
+            relevant_indices.append(((time_mask.sum(dim=1) >= self.num_past) & location_mask).nonzero().flatten())
+        self.relevant_indices = torch.concat(relevant_indices)
 
         names = [os.path.splitext(os.path.basename(self.files_full_path[rel_idx]))[0] + ".pkl" for rel_idx in
                  self.relevant_indices.tolist()]
         missing_files = set(names).difference(os.listdir(self.cache_dir))
+
         for file in tqdm(missing_files, desc="generating samples for cache"):
             name = os.path.splitext(file)[0]
             index = self.file_names_no_ext.index(name)
@@ -53,10 +61,10 @@ class BirdsDataset(Dataset):
             return pickle.load(f)
 
     def _load_img(self, file):
-        image_prev = Image.open(file)
-        image_prev = image_prev.crop(self.box)
-        image_prev = image_prev.resize(self.size)
-        img_numpy = np.array(image_prev) / 255.0
+        img = Image.open(file)
+        img = img.crop(self.box)
+        img = img.resize(self.size)
+        img_numpy = np.array(img) / 255.0
         return torch.from_numpy(img_numpy)
 
     def _load_annotation(self, file):
