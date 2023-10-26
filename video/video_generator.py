@@ -207,18 +207,7 @@ def put_ellipse_centers(arr, ellipses):
 
 
 def stack(arr):
-    stacked = []
-    for i, im in enumerate(arr):
-        if i + 2 >= arr.shape[0]:
-            break
-
-        stacked.append(im)
-        stacked[i] = np.add(stacked[i], arr[i + 1])
-        stacked[i] = np.add(stacked[i], arr[i + 2])
-        # cutoff
-        stacked[i][stacked[i] <= 256] = 0
-        stacked[i][stacked[i] > 256] = 255
-    return np.array(stacked)
+    return (arr[:-2] + arr[1:-1] + arr[2:] > 256).astype(np.float32) * 255
 
 
 def create_centroid(cont):
@@ -284,52 +273,22 @@ def RAD_COLOR_FRAME(i, input, prediction_array, draw_ellipses=0, draw_prediction
     # convert to uint8
     in1 = np.uint8(input[i, :, :, 0:3] * 255)
     in2 = np.uint8(input[i + 1, :, :, 0:3] * 255)
-    in3 = np.uint8(input[i + 2, :, :, 0:3] * 255)
-    in4 = np.uint8(input[i + 3, :, :, 0:3] * 255)
-    in5 = np.uint8(input[i + 4, :, :, 0:3] * 255)
-
-    # in1=input[i,:,:,0:3]
-    # in2=input[i+1,:,:,0:3]
-    # in3=input[i+2,:,:,0:3]
-    # in4=input[i+3,:,:,0:3]
-    # in5=input[i+4,:,:,0:3]
 
     # convert to rgb
     in1 = cv2.cvtColor(in1, cv2.COLOR_BGR2RGB)
     in2 = cv2.cvtColor(in2, cv2.COLOR_BGR2RGB)
-    in3 = cv2.cvtColor(in3, cv2.COLOR_BGR2RGB)
-    in4 = cv2.cvtColor(in4, cv2.COLOR_BGR2RGB)
-    in5 = cv2.cvtColor(in5, cv2.COLOR_BGR2RGB)
 
     # create masks
     bool2 = (in2 < 125) | (in2 > 129)
     mask2 = np.uint8(np.zeros((256, 256)))
     mask2[bool2[:, :, 0]] = 200
-    bool3 = (in3 < 125) | (in3 > 129)
-    mask3 = np.uint8(np.zeros((256, 256)))
-    mask3[bool3[:, :, 0]] = 200
-    bool4 = (in4 < 125) | (in4 > 129)
-    mask4 = np.uint8(np.zeros((256, 256)))
-    mask4[bool4[:, :, 0]] = 200
-    bool5 = (in5 < 125) | (in5 > 129)
-    mask5 = np.uint8(np.zeros((256, 256)))
-    mask5[bool5[:, :, 0]] = 200
 
     mask2 = Image.fromarray(mask2)
-    mask3 = Image.fromarray(mask3)
-    mask4 = Image.fromarray(mask4)
-    mask5 = Image.fromarray(mask5)
 
     in1 = Image.fromarray(in1)
     in2 = Image.fromarray(in2)
-    in3 = Image.fromarray(in3)
-    in4 = Image.fromarray(in4)
-    in5 = Image.fromarray(in5)
 
     in1.paste(in2, (0, 0), mask2)
-    # in1.paste(in3, (0,0), mask3)
-    # in1.paste(in4, (0,0), mask4)
-    # in1.paste(in5, (0,0), mask5)
 
     frame = np.array(in1)
 
