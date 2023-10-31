@@ -17,14 +17,15 @@ def augment(x, y):
     translate_x = np.random.randint(-64, 64)
     translate_y = np.random.randint(-64, 64)
 
-    x_aug = affine(x, angle=angle, translate=[translate_x, translate_y], scale=1., shear=0., fill=(127 / 255)) # gray
+    x_aug = affine(x, angle=angle, translate=[translate_x, translate_y], scale=1., shear=0., fill=(127 / 255))  # gray
     y_aug = affine(y, angle=angle, translate=[translate_x, translate_y], scale=1., shear=0., fill=0)
 
     return x_aug, y_aug
 
 
 class BirdsDataset(Dataset):
-    def __init__(self, files: List[str], box: Tuple, num_past: int, diff_minutes: int, size: Tuple[int, int], should_augment: bool):
+    def __init__(self, files: List[str], box: Tuple, num_past: int, diff_minutes: int, size: Tuple[int, int],
+                 should_augment: bool, tighten_labels: bool = False):
         self.files_full_path = files
         self.file_names = [os.path.basename(f) for f in files]
         self.file_names_no_ext = [os.path.splitext(f)[0] for f in self.file_names]
@@ -33,6 +34,7 @@ class BirdsDataset(Dataset):
         self.num_past = num_past
         self.diff_minutes = diff_minutes
         self.size = size
+        self.tighten_labels = tighten_labels
         self.should_augment = should_augment
         self.cache_dir = "cache"
         os.makedirs(self.cache_dir, exist_ok=True)
@@ -71,6 +73,10 @@ class BirdsDataset(Dataset):
         filename = os.path.splitext(os.path.basename(self.files_full_path[rel_idx]))[0]
         with open(os.path.join(self.cache_dir, f"{filename}.pkl"), "rb") as f:
             x, y = pickle.load(f)
+
+        if self.tighten_labels:
+            x_mask = torch.all((x[:3] > 125 / 255) & (x[:3] < 129 / 255), axis=0)
+            y[:, x_mask] = 0
 
         if self.should_augment:
             x, y = augment(x, y)

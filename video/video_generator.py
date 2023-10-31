@@ -1,6 +1,9 @@
 from pathlib import Path
 from typing import Tuple, List, Union, Callable
 
+from scipy.spatial.distance import cdist
+from tqdm import tqdm
+
 from preprocessing import Preprocessor
 from preprocessing import load_files
 
@@ -12,6 +15,7 @@ import torch.nn.functional as F
 
 from PIL import Image
 from skimage.measure import block_reduce
+import imageio
 
 # import rpy2.robjects as ro
 # from rpy2.robjects import r
@@ -22,8 +26,6 @@ import torch
 from torch.nn.modules.utils import consume_prefix_in_state_dict_if_present
 from pytorch.unet.unet_model import UNet
 
-
-# Ellipses
 
 def dilate_cont(img,
                 cont):  # this function finds contours for smaller predictions that dont have enough length for a contour
@@ -148,7 +150,7 @@ def preprocess_rad(rad, pred):
     # put pred mask on radar image
     masked_rad = np.dstack((rad_temp, np.uint8(pred_temp)))
     masked_rad[masked_rad[:, :, 3] == 0] = 255
-    masked_rad = masked_rad[:, :, 0:3]
+    masked_rad = masked_rad[:, :, 0:3]  # TODO: just like: rad_temp[~pred_temp] = 255
 
     # turn radar image to grayscale
     gray_rad = cv2.cvtColor(masked_rad, cv2.COLOR_RGB2GRAY)
@@ -162,13 +164,13 @@ def preprocess_rad(rad, pred):
     return gray_rad
 
 
-def create_targets(rad, pred, create_obj_func):
+def create_targets(x, pred, create_obj_func):
     # preprocess the radar image
-    img = preprocess_rad(np.uint8(rad * 255), pred)  # preprocess the radar image
+    x = preprocess_rad(np.uint8(x * 255), pred)  # preprocess the radar image
     # img=rad.copy()
     # pixelate the image to find roughly most contours
     block_size = (2, 2)
-    px_rad = np.uint8(block_reduce(img, block_size=block_size, func=np.mean))
+    px_rad = np.uint8(block_reduce(x, block_size=block_size, func=np.mean))
     px_rad = np.array(Image.fromarray(px_rad).resize((256, 256), Image.NEAREST))
     # px_rad = np.uint8(img.copy())
     targets = []
@@ -179,17 +181,17 @@ def create_targets(rad, pred, create_obj_func):
             if cv2.contourArea(cont) < 40:  # check if contour is not too big
                 targets.append(create_obj_func(cont))  # fit a target to each contour
             else:
-                broken_conts = break_major_cont(img, cont)  # if the contour is too big, break it up
+                broken_conts = break_major_cont(x, cont)  # if the contour is too big, break it up
                 for bcont in broken_conts:
                     if len(bcont) > 5:
                         targets.append(create_obj_func(bcont))
                     else:
-                        dilated_conts = dilate_cont(img,
-                                                    bcont)  # if the contour is too small, dilate the original image to fit an ellipse
+                        # if the contour is too small, dilate the original image to fit an ellipse
+                        dilated_conts = dilate_cont(x, bcont)
                         for dcont in dilated_conts:
                             targets.append(create_obj_func(dcont))
         else:
-            dilated_conts = dilate_cont(img, cont)  # again, for the possibility of a contour which is too small
+            dilated_conts = dilate_cont(x, cont)  # again, for the possibility of a contour which is too small
             for dcont in dilated_conts:
                 targets.append(create_obj_func(dcont))
 
@@ -232,6 +234,21 @@ def put_centroid_centers(arr, centroids):
     return temp_arr
 
 
+def plot_animation(images: np.ndarray, filename: str):
+    imageio.mimsave(filename, images, fps=5)  # Adjust duration as needed
+
+
+def write_video(images: Union[np.ndarray, List[np.ndarray]], filename: str, frame_size: Tuple[int, int] = (1024, 1024),
+                fps: int = 5):
+    fourcc = cv2.VideoWriter_fourcc(*'MJPG')
+    out = cv2.VideoWriter(filename, fourcc, fps, frame_size, True)
+    print(f"Started writing video {filename}")
+    for img in images:
+        out.write(img)
+    out.release()
+    print(f"Finished writing video {filename}")
+
+
 with Path('..'):
     files = load_files()
 
@@ -241,6 +258,7 @@ with Path('..'):
 
 model = UNet(n_channels=9, n_classes=1)
 checkpoint_path = "/home/theator/ziv/code/birds/pytorch/logs/lr=0.001;threshold=0.5;sep_sites/version_0/checkpoints/epoch=9-step=1960.ckpt"
+# checkpoint_path = "/home/theator/ziv/code/birds/pytorch/logs/lr=0.001;threshold=0.5;augmentations/version_2/checkpoints/epoch=19-step=3920.ckpt"
 w = torch.load(checkpoint_path)
 consume_prefix_in_state_dict_if_present(w['state_dict'], prefix="model.")
 model.load_state_dict(w['state_dict'])
@@ -248,9 +266,10 @@ model = model.to("cuda:0")
 
 model.eval()
 with torch.no_grad():
-    predict = model(torch.from_numpy(input).permute(0, 3, 1, 2).to(device="cuda:0", dtype=torch.float32))
-    predict = F.sigmoid(predict)
+    probs = model(torch.from_numpy(input).permute(0, 3, 1, 2).to(device="cuda:0", dtype=torch.float32))
+    probs = F.sigmoid(probs)
 
+predict = probs.clone()
 predict[predict <= 0.2] = 0
 predict[predict > 0.2] = 255
 
@@ -258,9 +277,23 @@ pred = predict[:, 0, :, :].cpu().numpy()
 
 # create output with ellipses
 predict_numpy = predict.squeeze().cpu().numpy()
-ellipses = [create_targets(input[i, ..., :3], im, create_ellipse) for i, im in enumerate(predict_numpy)]
-out_pred_ell = put_ellipse_centers(stack(predict_numpy), ellipses)
-plt.imshow(out_pred_ell[0])
+ellipses = [create_targets(input[i, ..., :3], curr_pred, create_ellipse) for i, curr_pred in enumerate(predict_numpy)]
+
+distance_threshold = 10
+temporal_distance = 2
+neighbors_amount = 1
+centers = [np.array(e)[:, :2] for e in ellipses]
+centers_filtered = []
+for i in range(temporal_distance, len(centers)):
+    relevant_centers = [centers[i - t] for t in range(1, temporal_distance + 1)]
+    d = cdist(centers[i], np.concatenate(relevant_centers, axis=0))
+    mask = np.sum(d < distance_threshold, axis=1) > neighbors_amount
+    centers_filtered.append(centers[i][mask])
+
+out_pred_ell = put_ellipse_centers(predict_numpy[temporal_distance:], centers_filtered)
+
+write_video([np.array(Image.fromarray(im.astype(np.uint8)).resize((1024, 1024))) for im in out_pred_ell],
+            'plots_video_ellipses_past=2_neighbors=1_dist=10.avi')
 
 # create output with centroids
 predict_numpy = predict.squeeze().cpu().numpy()
@@ -303,71 +336,16 @@ def RAD_COLOR_FRAME(i, input, prediction_array, draw_ellipses=0, draw_prediction
     return frame
 
 
-def write_video(images: Union[np.ndarray, List[np.ndarray]], filename: str, frame_size: Tuple[int, int] = (1024, 1024),
-                fps: int = 5):
-    fourcc = cv2.VideoWriter_fourcc(*'MJPG')
-    out = cv2.VideoWriter(filename, fourcc, fps, frame_size, True)
-    print(f"Started writing video {filename}")
-    for img in images:
-        out.write(img)
-    out.release()
-    print(f"Finished writing video {filename}")
-
-
 write_video([np.array(Image.fromarray(im.astype(np.uint8)).resize((1024, 1024))) for im in out_pred_ell],
             'plots_video_ellipses.avi')
-
 write_video([RAD_COLOR_FRAME(i, input, im) for i, im in enumerate(predict.cpu().numpy()[:-5])],
             'model_ppi_video.avi')
-
 write_video([RAD_COLOR_FRAME(i, input, im) for i, im in enumerate(stack(pred)[:-5])],
             'model_ppi_video_stack.avi')
 
-# Tests
+probs_to_write = (probs * 255).cpu().numpy().squeeze()[:-5].astype(np.uint8)
+preds_to_write = (predict.cpu().numpy().squeeze()[:-5]).astype(np.uint8)
 
-
-test = predict[:, :, :, 0].copy()
-ppi = input[:, :, :, 0:3].copy()
-
-test[test < 0.3] = 0
-
-# In[ ]:
-
-
-plt.figure(figsize=(8, 8))
-plt.imshow(predict[0])
-plt.show()
-
-# In[ ]:
-
-
-plt.figure(figsize=(8, 8))
-plt.imshow(predict[0])
-plt.show()
-
-# In[ ]:
-
-
-tt = cv2.cvtColor(test[0], cv2.COLOR_BGR2RGB)
-ppi[0][tt > 0.2] = ppi[0][tt > 0.2] + 0.1
-
-# In[ ]:
-
-
-plt.figure(figsize=(8, 8))
-plt.imshow(ppi[0])
-plt.show()
-
-# In[ ]:
-
-
-plt.figure(figsize=(8, 8))
-plt.imshow(out_pred_cen[43])
-plt.show()
-
-# In[ ]:
-
-
-plt.figure(figsize=(8, 8))
-plt.imshow(out_pred_ell[43])
-plt.show()
+write_video([cv2.cvtColor(np.concatenate((p1, p2), axis=1), cv2.COLOR_GRAY2BGR) for p1, p2 in
+             zip(probs_to_write, preds_to_write)],
+            'probs_pred.avi', frame_size=(256, 512))
