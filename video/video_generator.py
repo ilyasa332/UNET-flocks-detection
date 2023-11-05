@@ -291,7 +291,7 @@ for i in range(temporal_distance, len(centers)):
     mask = np.sum(d < distance_threshold, axis=1) > neighbors_amount
     centers_filtered.append(centers[i][mask])
 
-centers_filtered = get_covering_centers(centers_filtered, max_cluster_size=10)
+centers_filtered = get_covering_centers(centers_filtered, max_cluster_size=distance_threshold)
 
 out_pred_ell = put_ellipse_centers(predict_numpy[temporal_distance:], centers_filtered)
 
