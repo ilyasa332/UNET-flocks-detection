@@ -25,6 +25,7 @@ import imageio
 import torch
 from torch.nn.modules.utils import consume_prefix_in_state_dict_if_present
 from pytorch.unet.unet_model import UNet
+from video.utils import get_covering_centers
 
 
 def dilate_cont(img,
@@ -290,10 +291,12 @@ for i in range(temporal_distance, len(centers)):
     mask = np.sum(d < distance_threshold, axis=1) > neighbors_amount
     centers_filtered.append(centers[i][mask])
 
+centers_filtered = get_covering_centers(centers_filtered, max_cluster_size=10)
+
 out_pred_ell = put_ellipse_centers(predict_numpy[temporal_distance:], centers_filtered)
 
 write_video([np.array(Image.fromarray(im.astype(np.uint8)).resize((1024, 1024))) for im in out_pred_ell],
-            'plots_video_ellipses_past=2_neighbors=1_dist=10.avi')
+            'plots_video_ellipses_cover.avi')
 
 # create output with centroids
 predict_numpy = predict.squeeze().cpu().numpy()
